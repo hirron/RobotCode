@@ -11,9 +11,9 @@
 
 bool button1_pushed; //flag to store button1 input
 bool button2_pushed; //flag to store button2 input
-int perp=0;// If sensors have equal value they are presumed perpendicular, 1 is left tilt, 2 is right tilt
-int align=0;// The difference between the 2 infrared variables
+int sweep=0; // determines which direction robot is sweeping in
 int PeakReading=0;
+int VSonar=255;
 
 
 /* monitorInput()
@@ -35,6 +35,8 @@ typedef enum{
 	DropState,
 	ParkState,
 	EndState,
+	DeadState
+
 }T_FSMState;
 
 T_FSMState FSMState;
@@ -54,16 +56,6 @@ void monitorInput()
 	{
 		button2_pushed = true;
 	}
-
-	align = SensorValue[in1]-SensorValue[in2];
-
-	if(align>10){
-		perp=2;
-		}else if(align<-10){
-		perp=1;
-		}else{
-		perp=0;
-	}
 }
 
 void Turn(int Dir)
@@ -71,23 +63,26 @@ void Turn(int Dir)
 	clearTimer(T1);
 	//1 is a left turn, 0 is a right turn
 	if(Dir==1){
+		// turns front wheel
 		while (time1[T1]<=500){
 			motor[motor1]= 0;
 			motor[motor2]= -50;
 		}
-
+		// goes forward, turning robot
 		while (time1[T1]>=500&&time1[T1]<=1250){
 			motor[motor1]= 55;
 			motor[motor2]= 0;
 		}
+		// realigns front wheel to default state
 		motor[motor1]= 0;
 		while (time1[T1]<=1700&&time1[T1]>=1250){
 			motor[motor1]= 0;
 			motor[motor2]= 43;
 		}
 		motor[motor2]= 0;
-		}else{  // If not turning left must be turning right
-
+		}else{
+		
+		// same thing in opposite direction
 		while (time1[T1]<=500){
 			motor[motor1]= 0;
 			motor[motor2]= 50;
@@ -102,8 +97,25 @@ void Turn(int Dir)
 			motor[motor1]= 0;
 			motor[motor2]= -43;
 		}
-		motor[motor2]= 0;}
+		motor[motor2]= 0;
+		}
 }
+
+// sets the front wheel to 90 degrees to enable on spot turning
+void SpotRot(bool Start){
+
+	clearTimer(T1);
+
+	while (time1[T1]<=1000){
+		if(Start==true){
+			motor[motor2]=50;
+			}else{
+			motor[motor2]=-50;
+		}
+	}
+	motor[motor2]= 0;
+}
+
 
 
 
@@ -122,13 +134,9 @@ task main()
 				Turn(1);
 				}else if(button2_pushed==true){
 				Turn(0);
-				}else{
-				//turns wheel to 90 degrees, transitions to allighn state
-				clearTimer(T1);
-				while (time1[T1]<=1000){
-					motor[motor2]= 50;
-				}
-				motor[motor2]= 0;
+				}else{ 
+				//turns wheel to 90 degrees, transitions to align state
+				SpotRot(true);
 				FSMState=AlignState;
 			}
 			break;
@@ -147,11 +155,7 @@ task main()
 				// once significant dropoff occurs wheel goes streight and transitions to move state
 				}else if(SensorAv<PeakReading-50){
 				motor[motor1]=0;
-				clearTimer(T1);
-				while (time1[T1]<=1000){
-					motor[motor2]= -50;
-					FSMState=MoveState;
-				}
+				SpotRot(false);
 				break;
 
 
@@ -194,12 +198,62 @@ task main()
 
 			case ParkState:
 				monitorInput();
+				//Turns robot left so that it doesn't run into beacon
+				Turn(1);
+				// if wall is too distant turn
+				if(SensorValue[S3]==255){
+					Turn(1);
+				}
+				while(SensorValue[S3]<255)
+					//while over a meter away rapidly approches wall
+				if(SensorValue[S3]>100){
+					motor[motor1]=120;
+				}
+				// slows down at a meter
+				if(SensorValue[S3]<100){
+					motor[motor1]=60;
+				}
+				// stops motor at 15 cm distance
+				if(SensorValue[S3]<15){
+					motor[motor1]=0;
+					SpotRot(true);		// prepares for aligning robot
+					FSMState=EndState;
+				}
 
 				break;
+
 
 			case EndState:
+				// Sweep tells robot which direction to turn in
+				if(sweep==0){
+					motor[motor1]=50;
+					}else{
+					motor[motor1]=-50;
+				}
+				// if distance to wall is growing so is angle from wall, thus it is either time to stop
+				// or move in other direction
+				if(SensorValue[S3]<VSonar){
+					VSonar=SensorValue[S3];
+					// flags that robot was moving in right direction
+					sweep=2;
+				}
+				if(SensorValue[S3]>VSonar){
+					//if robot was moving in wrong direction, robot changes direction
+					if(sweep==0){
+						sweep=1;
+					}
+					// if robot was moving in right direction it has reached end
+					if(sweep==2){
+						motor[motor1]=0;
+						FSMState = DeadState;
+					}
+				}
 
 				break;
+				// Robot stops all motors
+			case DeadState:
+				motor[motor1]=0;
+				motor[motor2]=0;
 			}
 		}
 	}
